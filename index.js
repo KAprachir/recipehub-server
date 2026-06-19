@@ -120,6 +120,28 @@ async function run () {
       }
     })
 
+    app.get('/api/admin/recipes-summary', async (req, res) => {
+      try {
+        // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
+        const recipes = await recipesCollection.find().toArray()
+
+        // কার্ড মেকট্রিক্সের জন্য সিম্পল কাউন্ট
+        const totalCount = await recipesCollection.countDocuments()
+        const featuredCount = await recipesCollection.countDocuments({
+          isFeatured: true
+        })
+
+        res.send({
+          recipes,
+          totalCount,
+          featuredCount
+        })
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
     // আইডি দিয়ে নির্দিষ্ট রেসিপি খোঁজার API
     app.get('/api/recipes/:id', async (req, res) => {
       try {
