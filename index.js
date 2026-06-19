@@ -6,7 +6,7 @@ require('dotenv').config()
 const app = express()
 const port = process.env.PORT || 5000
 
-//(Middleware)
+// (Middleware)
 app.use(cors())
 app.use(express.json())
 
@@ -22,27 +22,37 @@ const client = new MongoClient(uri, {
 
 async function run () {
   try {
-    // MongoDB
+    // MongoDB Connection
     await client.connect()
-    console.log('Successfully connected to MongoDB! ')
+    console.log('Successfully connected to MongoDB! 🎉')
 
-    // Database and Collection Defined
+    // Database and Collections Defined
     const db = client.db(process.env.DB_NAME || 'recipehub')
-    const usersCollection = db.collection('users')
+    const usersCollection = db.collection('user')
     const recipesCollection = db.collection('recipes')
     const favoritesCollection = db.collection('favorites')
     const reportsCollection = db.collection('reports')
     const paymentsCollection = db.collection('payments')
 
-    // Recipes Related Api
-
-    app.post('/api/recipes', async (req, res) => {
-      const recipesData = req.body
-      const result = await recipesCollection.insertOne(recipesData)
-      res.send(result)
+    // টেস্ট রুট (সার্ভার ঠিকঠাক চলছে কিনা চেক করার জন্য)
+    app.get('/', (req, res) => {
+      res.send('RecipeHub Server is running smoothly...')
     })
 
-    // ফিল্টারিং, সোর্টিং এবং পেজিনেশন সহ সব রেসিপি পাওয়ার ডাইনামিক API
+    // ─── RECIPES RELATED API ───
+
+    app.post('/api/recipes', async (req, res) => {
+      try {
+        const recipesData = req.body
+        const result = await recipesCollection.insertOne(recipesData)
+        res.send(result)
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Failed to insert recipe' })
+      }
+    })
+
+    // ফিল্টারিং, সোর্টিং এবং পেজিনেশন সহ সব রেসিপি পাওয়ার ডাইনামিক API
     app.get('/api/recipes', async (req, res) => {
       try {
         // ১. ফ্রন্টএন্ড থেকে পাঠানো Query Parameters গুলো রিসিভ করা
@@ -57,12 +67,11 @@ async function run () {
         const limit = 12
         const skip = (page - 1) * limit
 
-        // ২. ডাইনামিক মঙ্গোডিবি কুয়েরি অবজেক্ট তৈরি করা
+        // ২. ডাইনামিক মঙ্গোডিবি কুয়েরি অবজেক্ট তৈরি করা
         let query = { status: 'active' } // শুধুমাত্র একটিভ রেসিপিগুলো দেখাবে
 
-        // ক্যাটাগরি ফিল্টার (রিকোয়ারমেন্ট অনুযায়ী strictly $in অপারেটর ব্যবহার করা হয়েছে)
+        // ক্যাটাগরি ফিল্টার
         if (category) {
-          // যদি ফ্রন্টএন্ড থেকে কমা দিয়ে একাধিক ক্যাটাগরি আসে বা একটি আসে, তাকে অ্যারে বানিয়ে $in-এ পাস করা হচ্ছে
           const categoryArray = category.split(',')
           query.category = { $in: categoryArray }
         }
@@ -77,20 +86,20 @@ async function run () {
           query.difficultyLevel = difficulty
         }
 
-        // ম্যাক্সিমাম প্রিপারেশন টাইম ফিল্টার ($lte মানে Less Than or Equal)
+        // ম্যাক্সিমাম প্রিপারেশন টাইম ফিল্টার
         if (maxTime) {
           query.preparationTime = { $lte: parseInt(maxTime) }
         }
 
         // ৩. সোর্টিং অবজেক্ট তৈরি করা
-        let sortObj = { createdAt: -1 } // ডিফল্ট: নতুন রেসিপি আগে দেখাবে
+        let sortObj = { createdAt: -1 }
         if (sortBy === 'Popular') {
-          sortObj = { likesCount: -1 } // পপুলার: বেশি লাইক পাওয়া রেসিপি আগে দেখাবে
+          sortObj = { likesCount: -1 }
         } else if (sortBy === 'PrepTime') {
-          sortObj = { preparationTime: 1 } // কম সময়ে রান্না হওয়া রে斯িপি আগে দেখাবে
+          sortObj = { preparationTime: 1 }
         }
 
-        // ৪. ডাটাবেজ থেকে ফিল্টারড ডাটা এবং টোটাল কাউন্ট নিয়ে আসা
+        // ৪. ডাটাবেজ থেকে ফিল্টারড ডাটা এবং টোটাল কাউন্ট নিয়ে আসা
         const recipes = await recipesCollection
           .find(query)
           .sort(sortObj)
@@ -98,7 +107,6 @@ async function run () {
           .limit(limit)
           .toArray()
 
-        // ফিল্টার অনুযায়ী টোটাল কতগুলো রেসিপি আছে তা কাউন্ট করা (পেজিনেশনের ফুটারের জন্য)
         const totalCount = await recipesCollection.countDocuments(query)
 
         // ৫. ফ্রন্টএন্ডে রেসপন্স পাঠানো
@@ -112,12 +120,31 @@ async function run () {
       }
     })
 
-    // টেস্ট রুট (সার্ভার ঠিকঠাক চলছে কিনা চেক করার জন্য)
-    app.get('/', (req, res) => {
-      res.send('RecipeHub Server is running smoothly...')
+    // আইডি দিয়ে নির্দিষ্ট রেসিপি খোঁজার API
+    app.get('/api/recipes/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const result = await recipesCollection.findOne(query)
+        res.send(result)
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Failed to fetch recipe' })
+      }
+    })
+
+    // ─── USER RELATED API (Moved inside run() function) ───
+    app.get('/api/users', async (req, res) => {
+      try {
+        const result = await usersCollection.find().toArray()
+        res.send(result)
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Failed to fetch users' })
+      }
     })
   } finally {
-    // এখানে client.close() দেওয়া যাবে না, দিলে কানেকশন বন্ধ হয়ে যাবে।
+    // এখানে client.close() দেওয়া যাবে না।
   }
 }
 
