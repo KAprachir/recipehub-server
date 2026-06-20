@@ -163,6 +163,20 @@ async function run () {
       }
     })
 
+    // আইডি দিয়ে নির্দিষ্ট রেসিপি খোঁজার for details recipes API
+    app.get('/api/recipes/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const result = await recipesCollection.findOne(query)
+        res.send(result)
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Failed to fetch recipe' })
+      }
+    })
+
+    // admin recipe controler api
     app.get('/api/admin/recipes-summary', verifyToken, async (req, res) => {
       try {
         // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
@@ -185,20 +199,61 @@ async function run () {
       }
     })
 
-    // আইডি দিয়ে নির্দিষ্ট রেসিপি খোঁজার API
-    app.get('/api/recipes/:id', async (req, res) => {
+    // user recipe controler api
+    // 🎯 ফিক্স ১: এখানে verifyToken মিডলওয়্যারটি যোগ করা হলো, না হলে req.user পাবেন না।
+    app.get('/api/user/my-recipe', verifyToken, async (req, res) => {
       try {
-        const id = req.params.id
-        const query = { _id: new ObjectId(id) }
-        const result = await recipesCollection.findOne(query)
-        res.send(result)
+        // 🎯 ফিক্স ২: ট্রাই-ক্যাচ (try-catch) ব্লক যোগ করা হলো নিরাপদ এরর হ্যান্ডলিংয়ের জন্য।
+        const myRecipes = await recipesCollection
+          .find({ userId: req.user.authorId }) // নিশ্চিত হয়ে নিন রেসিপি POST করার সময় আপনি 'userId' নামেই আইডি সেভ করেছিলেন।
+          .toArray()
+
+        res.send(myRecipes)
       } catch (error) {
-        console.error(error)
-        res.status(500).send({ message: 'Failed to fetch recipe' })
+        console.error('Error fetching my recipes:', error)
+        res.status(500).send({ message: 'Internal server error' })
       }
     })
 
-    // ─── USER RELATED API (Moved inside run() function) ───
+    // Get user-specific recipes created by the active logged-in user
+    app.get('/api/user/my-recipes', verifyToken, async (req, res) => {
+      try {
+        const userId = req.user._id.toString()
+        const myRecipes = await recipesCollection
+          .find({ authorId: userId })
+          .toArray()
+        res.send(myRecipes)
+      } catch (error) {
+        console.error('Error fetching user recipes:', error)
+        res.status(500).send({ message: 'Failed to fetch user recipes' })
+      }
+    })
+
+    // Delete a recipe
+    app.delete('/api/recipes/:id', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const recipe = await recipesCollection.findOne(query)
+        if (!recipe) {
+          return res.status(404).send({ message: 'Recipe not found' })
+        }
+        // Safety check: only author or admin can delete
+        if (
+          recipe.authorId !== req.user._id.toString() &&
+          req.user.role !== 'admin'
+        ) {
+          return res.status(403).send({ message: 'Forbidden' })
+        }
+        const result = await recipesCollection.deleteOne(query)
+        res.send(result)
+      } catch (error) {
+        console.error('Error deleting recipe:', error)
+        res.status(500).send({ message: 'Failed to delete recipe' })
+      }
+    })
+
+    // ─── USER RELATED API ───
     app.get('/api/users', async (req, res) => {
       try {
         const result = await usersCollection.find().toArray()
