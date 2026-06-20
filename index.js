@@ -199,13 +199,22 @@ async function run () {
       }
     })
 
+    app.delete('/api/recipes/:id', async (req, res) => {
+      const id = req.params.id
+      const query = { _id: new ObjectId(id) }
+      const recipe = await recipesCollection.findOne(query)
+      if (!recipe) {
+        return res.status(404).send({ message: 'Recipe not found' })
+      }
+      const result = await recipesCollection.deleteOne(query)
+      res.send(result)
+    })
+
     // user recipe controler api
-    // 🎯 ফিক্স ১: এখানে verifyToken মিডলওয়্যারটি যোগ করা হলো, না হলে req.user পাবেন না।
     app.get('/api/user/my-recipe', verifyToken, async (req, res) => {
       try {
-        // 🎯 ফিক্স ২: ট্রাই-ক্যাচ (try-catch) ব্লক যোগ করা হলো নিরাপদ এরর হ্যান্ডলিংয়ের জন্য।
         const myRecipes = await recipesCollection
-          .find({ userId: req.user.authorId }) // নিশ্চিত হয়ে নিন রেসিপি POST করার সময় আপনি 'userId' নামেই আইডি সেভ করেছিলেন।
+          .find({ userId: req.user.authorId })
           .toArray()
 
         res.send(myRecipes)
@@ -229,7 +238,7 @@ async function run () {
       }
     })
 
-    // Delete a recipe
+    // Delete user-specific recipes created by the active logged-in user
     app.delete('/api/recipes/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id
