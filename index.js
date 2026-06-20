@@ -33,6 +33,49 @@ async function run () {
     const favoritesCollection = db.collection('favorites')
     const reportsCollection = db.collection('reports')
     const paymentsCollection = db.collection('payments')
+    const sessionsCollection = db.collection('session')
+
+    const verifyToken = async (req, res, next) => {
+      try {
+        const authHeader = req.headers.authorization
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return res
+            .status(401)
+            .send({ message: 'Unauthorized - No token provided' })
+        }
+        const token = authHeader.split(' ')[1]
+        // session কালেকশন থেকে টোকেন চেক করা হলো
+        const session = await sessionsCollection.findOne({ token })
+        if (!session) {
+          return res
+            .status(401)
+            .send({ message: 'Unauthorized - Invalid token' })
+        }
+        // ইউজার কালেকশন থেকে ইউজার বের করুন
+        if (new Date() > new Date(session.expiresAt)) {
+          return res
+            .status(401)
+            .send({ message: 'Unauthorized - Session expired' })
+        }
+
+        const user = await usersCollection.findOne({
+          _id: new ObjectId(session.userId)
+        })
+        if (!user) {
+          return res
+            .status(401)
+            .send({ message: 'Unauthorized - User not found' })
+        }
+        // রিকোয়েস্ট অবজেক্টে ইউজার সেট করে দিন
+        req.user = user
+        next()
+      } catch (error) {
+        console.error('Token verification error:', error)
+        res
+          .status(500)
+          .send({ message: 'Internal server error during authentication' })
+      }
+    }
 
     // টেস্ট রুট (সার্ভার ঠিকঠাক চলছে কিনা চেক করার জন্য)
     app.get('/', (req, res) => {
@@ -120,7 +163,7 @@ async function run () {
       }
     })
 
-    app.get('/api/admin/recipes-summary', async (req, res) => {
+    app.get('/api/admin/recipes-summary', verifyToken, async (req, res) => {
       try {
         // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
         const recipes = await recipesCollection.find().toArray()
