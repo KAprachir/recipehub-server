@@ -176,6 +176,42 @@ async function run () {
       }
     })
 
+    // favourite post api
+    // 🎯 ফিক্স ১: verifyToken মিডলওয়্যার যুক্ত করা হলো
+    app.post('/api/recipes/:id/favorite', verifyToken, async (req, res) => {
+      try {
+        const recipeId = req.params.id
+        const userId = req.user.id // 🎯 ফিক্স ২: Better-Auth এর স্ট্রিং আইডি নেওয়া হলো
+
+        // 🎯 ফিক্স ৩: _id এর বদলে আলাদা ফিল্ড ব্যবহার করা হলো যেন ডুপ্লিকেট কি এরর না আসে
+        const query = { recipeId: recipeId, userId: userId }
+
+        const existing = await favoritesCollection.findOne(query)
+
+        if (existing) {
+          // যদি আগে থেকেই ফেভারিট করা থাকে, তবে রিমুভ করব
+          await favoritesCollection.deleteOne(query)
+
+          // 🎯 ফিক্স ৪: রিমুভ হওয়ার পর ক্লায়েন্টে রেসপন্স পাঠানো হলো (নাহলে হ্যাং হয়ে থাকত)
+          return res.json({
+            action: 'removed',
+            message: 'Removed from favorites'
+          })
+        } else {
+          // যদি ফেভারিট করা না থাকে, তবে নতুন ডকুমেন্ট ইনসার্ট করব
+          await favoritesCollection.insertOne({
+            recipeId: recipeId,
+            userId: userId,
+            createdAt: new Date()
+          })
+
+          return res.json({ action: 'added', message: 'Added to favorites' })
+        }
+      } catch (error) {
+        console.error('Favorite Toggle Error:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
     // admin recipe controler api
     app.get('/api/admin/recipes-summary', verifyToken, async (req, res) => {
       try {
@@ -235,6 +271,22 @@ async function run () {
       } catch (error) {
         console.error('Error fetching user recipes:', error)
         res.status(500).send({ message: 'Failed to fetch user recipes' })
+      }
+    })
+
+    // Fetch list of recipes favorited by the current logged-in user
+    app.get('/api/user/favorites', verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id
+        const favorites = await favoritesCollection.find({ userId: userId }).toArray()
+        const recipeIds = favorites.map(fav => new ObjectId(fav.recipeId))
+        const favoriteRecipes = await recipesCollection
+          .find({ _id: { $in: recipeIds } })
+          .toArray()
+        res.send(favoriteRecipes)
+      } catch (error) {
+        console.error('Error fetching user favorites:', error)
+        res.status(500).send({ message: 'Failed to fetch user favorites' })
       }
     })
 
