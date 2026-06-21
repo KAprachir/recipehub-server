@@ -176,29 +176,27 @@ async function run () {
       }
     })
 
-    // favourite post api
-    // 🎯 ফিক্স ১: verifyToken মিডলওয়্যার যুক্ত করা হলো
+    // Toggle Favorite Status: Adds recipe to favorites if not present, otherwise removes it
     app.post('/api/recipes/:id/favorite', verifyToken, async (req, res) => {
       try {
         const recipeId = req.params.id
-        const userId = req.user.id // 🎯 ফিক্স ২: Better-Auth এর স্ট্রিং আইডি নেওয়া হলো
+        const userId = req.user.id // Better-Auth user ID from the verified token session
 
-        // 🎯 ফিক্স ৩: _id এর বদলে আলাদা ফিল্ড ব্যবহার করা হলো যেন ডুপ্লিকেট কি এরর না আসে
+        // Unique query representing this user's preference for this recipe
         const query = { recipeId: recipeId, userId: userId }
 
         const existing = await favoritesCollection.findOne(query)
 
         if (existing) {
-          // যদি আগে থেকেই ফেভারিট করা থাকে, তবে রিমুভ করব
+          // If already favorited, remove the document
           await favoritesCollection.deleteOne(query)
 
-          // 🎯 ফিক্স ৪: রিমুভ হওয়ার পর ক্লায়েন্টে রেসপন্স পাঠানো হলো (নাহলে হ্যাং হয়ে থাকত)
           return res.json({
             action: 'removed',
             message: 'Removed from favorites'
           })
         } else {
-          // যদি ফেভারিট করা না থাকে, তবে নতুন ডকুমেন্ট ইনসার্ট করব
+          // If not favorited yet, add user-recipe pairing to database
           await favoritesCollection.insertOne({
             recipeId: recipeId,
             userId: userId,
@@ -231,6 +229,50 @@ async function run () {
         })
       } catch (error) {
         console.error(error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Get Admin Dashboard Summary: Retrieve statistics for the administrator overview
+    app.get('/api/admin/overview-summary', verifyToken, async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments()
+        const totalRecipes = await recipesCollection.countDocuments()
+        const premiumMembers = await usersCollection.countDocuments({ role: 'premium' })
+        const totalReports = await reportsCollection.countDocuments()
+
+        res.send({
+          totalUsers,
+          totalRecipes,
+          premiumMembers,
+          totalReports
+        })
+      } catch (error) {
+        console.error('Error fetching admin overview summary:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Get Admin Reports: Fetch all moderation reports submitted by users
+    app.get('/api/admin/reports', verifyToken, async (req, res) => {
+      try {
+        const reports = await reportsCollection.find().toArray()
+        res.send(reports)
+      } catch (error) {
+        console.error('Error fetching admin reports:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Dismiss Report: Dismiss a specific flagged report by marking its status as Dismissed
+    app.put('/api/admin/reports/:id/dismiss', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const result = await reportsCollection.updateOne(query, { $set: { status: 'Dismissed' } })
+        res.send(result)
+      } catch (error) {
+        console.error('Error dismissing report:', error)
         res.status(500).send({ message: 'Internal server error' })
       }
     })
@@ -274,17 +316,26 @@ async function run () {
       }
     })
 
-    // Fetch list of recipes favorited by the current logged-in user
+    // Get User Favorites: Retrieve all recipes favorited by the current logged-in user
     app.get('/api/user/favorites', verifyToken, async (req, res) => {
       try {
         const userId = req.user.id
+        
+        // 1. Fetch user-recipe pairings from favorites collection
         const favorites = await favoritesCollection
           .find({ userId: userId })
           .toArray()
-        const recipeIds = favorites.map(fav => new ObjectId(fav.recipeId))
+          
+        // 2. Validate and convert string IDs to MongoDB ObjectIds
+        const recipeIds = favorites
+          .filter(fav => ObjectId.isValid(fav.recipeId))
+          .map(fav => new ObjectId(fav.recipeId))
+          
+        // 3. Retrieve actual recipe details matching the ObjectIds
         const favoriteRecipes = await recipesCollection
           .find({ _id: { $in: recipeIds } })
           .toArray()
+          
         res.send(favoriteRecipes)
       } catch (error) {
         console.error('Error fetching user favorites:', error)
