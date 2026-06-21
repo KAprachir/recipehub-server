@@ -7,7 +7,9 @@ require('dotenv').config()
 const app = express()
 const port = process.env.PORT || 5000
 
-// (Middleware)
+// ==========================================
+// 1. MIDDLEWARES & GLOBAL SETUP
+// ==========================================
 app.use(cors())
 app.use(express.json())
 
@@ -36,6 +38,9 @@ async function run () {
     const paymentsCollection = db.collection('payments')
     const sessionsCollection = db.collection('session')
 
+    // ==========================================
+    // 2. AUTHENTICATION MIDDLEWARE
+    // ==========================================
     const verifyToken = async (req, res, next) => {
       try {
         const authHeader = req.headers.authorization
@@ -113,13 +118,19 @@ async function run () {
       }
     }
 
+    // ==========================================
+    // 3. GENERAL / HEALTH APIs
+    // ==========================================
     // টেস্ট রুট (সার্ভার ঠিকঠাক চলছে কিনা চেক করার জন্য)
     app.get('/', (req, res) => {
       res.send('RecipeHub Server is running smoothly...')
     })
 
-    // ─── RECIPES RELATED API ───
-
+    // ==========================================
+    // 4. RECIPES RELATED APIs
+    // ==========================================
+    
+    // Create Recipe
     app.post('/api/recipes', verifyToken, async (req, res) => {
       try {
         const recipesData = req.body
@@ -147,7 +158,6 @@ async function run () {
     // ফিল্টারিং, সোর্টিং এবং পেজিনেশন সহ সব রেসিপি পাওয়ার ডাইনামিক API
     app.get('/api/recipes', async (req, res) => {
       try {
-        // ১. ফ্রন্টএন্ড থেকে পাঠানো Query Parameters গুলো রিসিভ করা
         const page = parseInt(req.query.page) || 1
         const category = req.query.category
         const cuisine = req.query.cuisine
@@ -155,40 +165,31 @@ async function run () {
         const maxTime = req.query.maxTime
         const sortBy = req.query.sortBy || 'Newest'
 
-        // পেজিনেশনের হিসাব (প্রতি পেজে ১২টি করে কার্ড দেখাবে)
         const limit = 12
         const skip = (page - 1) * limit
 
-        // ২. ডাইনামিক মঙ্গোডিবি কুয়েরি অবজেক্ট তৈরি করা
-        let query = { status: 'active' } // শুধুমাত্র একটিভ রেসিপিগুলো দেখাবে
-
-        // Featured ফিল্টার
+        let query = { status: 'active' } 
         if (req.query.isFeatured) {
           query.isFeatured = req.query.isFeatured === 'true'
         }
 
-        // ক্যাটাগরি ফিল্টার
         if (category) {
           const categoryArray = category.split(',')
           query.category = { $in: categoryArray }
         }
 
-        // কুইজিন ফিল্টার
         if (cuisine) {
           query.cuisineType = cuisine
         }
 
-        // ডিফিকাল্টি ফিল্টার
         if (difficulty) {
           query.difficultyLevel = difficulty
         }
 
-        // ম্যাক্সিমাম প্রিপারেশন টাইম ফিল্টার
         if (maxTime) {
           query.preparationTime = { $lte: parseInt(maxTime) }
         }
 
-        // ৩. সোর্টিং অবজেক্ট তৈরি করা
         let sortObj = { createdAt: -1 }
         if (sortBy === 'Popular') {
           sortObj = { likesCount: -1 }
@@ -196,7 +197,6 @@ async function run () {
           sortObj = { preparationTime: 1 }
         }
 
-        // ৪. ডাটাবেজ থেকে ফিল্টারড ডাটা এবং টোটাল কাউন্ট নিয়ে আসা
         const recipes = await recipesCollection
           .find(query)
           .sort(sortObj)
@@ -206,7 +206,6 @@ async function run () {
 
         const totalCount = await recipesCollection.countDocuments(query)
 
-        // ৫. ফ্রন্টএন্ডে রেসপন্স পাঠানো
         res.send({
           recipes,
           totalCount
@@ -217,7 +216,6 @@ async function run () {
       }
     })
 
-    // আইডি দিয়ে নির্দিষ্ট রেসিপি খোঁজার for details recipes API
     app.get('/api/recipes/:id', async (req, res) => {
       try {
         const id = req.params.id
@@ -312,148 +310,36 @@ async function run () {
       }
     })
 
-    // admin recipe controler api
-    app.get('/api/admin/recipes-summary', verifyToken, async (req, res) => {
+    // Delete user-specific recipes created by the active logged-in user
+    app.delete('/api/recipes/:id', verifyToken, async (req, res) => {
       try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
-        const recipes = await recipesCollection.find().toArray()
-
-        // কার্ড মেকট্রিক্সের জন্য সিম্পল কাউন্ট
-        const totalCount = await recipesCollection.countDocuments()
-        const featuredCount = await recipesCollection.countDocuments({
-          isFeatured: true
-        })
-
-        res.send({
-          recipes,
-          totalCount,
-          featuredCount
-        })
-      } catch (error) {
-        console.error(error)
-        res.status(500).send({ message: 'Internal server error' })
-      }
-    })
-
-    // Toggle Feature State: Feature or unfeature a recipe (admin only)
-    app.patch('/api/admin/recipes/:id/feature', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const id = req.params.id
-        const { isFeatured } = req.body
-        const query = { _id: new ObjectId(id) }
-        const updateDoc = {
-          $set: {
-            isFeatured: !!isFeatured,
-            updatedAt: new Date()
-          }
-        }
-        const result = await recipesCollection.updateOne(query, updateDoc)
-        res.send(result)
-      } catch (error) {
-        console.error('Error toggling featured state:', error)
-        res.status(500).send({ message: 'Failed to toggle featured state' })
-      }
-    })
-
-    // Edit Recipe: Update general recipe fields from the admin panel (admin only)
-    app.patch('/api/admin/recipes/:id', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const id = req.params.id
-        const { recipeName, category, cuisineType, preparationTime } = req.body
-        const query = { _id: new ObjectId(id) }
-        
-        const updateFields = {}
-        if (recipeName !== undefined) updateFields.recipeName = recipeName
-        if (category !== undefined) updateFields.category = category
-        if (cuisineType !== undefined) updateFields.cuisineType = cuisineType
-        if (preparationTime !== undefined) updateFields.preparationTime = parseInt(preparationTime)
-        updateFields.updatedAt = new Date()
-
-        const result = await recipesCollection.updateOne(query, { $set: updateFields })
-        res.send(result)
-      } catch (error) {
-        console.error('Error updating recipe:', error)
-        res.status(500).send({ message: 'Failed to update recipe' })
-      }
-    })
-
-    // Get Admin Dashboard Summary: Retrieve statistics for the administrator overview
-    app.get('/api/admin/overview-summary', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const totalUsers = await usersCollection.countDocuments()
-        const totalRecipes = await recipesCollection.countDocuments()
-        const premiumMembers = await usersCollection.countDocuments({ role: 'premium' })
-        const totalReports = await reportsCollection.countDocuments()
-
-        res.send({
-          totalUsers,
-          totalRecipes,
-          premiumMembers,
-          totalReports
-        })
-      } catch (error) {
-        console.error('Error fetching admin overview summary:', error)
-        res.status(500).send({ message: 'Internal server error' })
-      }
-    })
-
-    // Get Admin Reports: Fetch all moderation reports submitted by users
-    app.get('/api/admin/reports', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const reports = await reportsCollection.find().toArray()
-        res.send(reports)
-      } catch (error) {
-        console.error('Error fetching admin reports:', error)
-        res.status(500).send({ message: 'Internal server error' })
-      }
-    })
-
-    // Dismiss Report: Dismiss a specific flagged report by marking its status as Dismissed
-    app.put('/api/admin/reports/:id/dismiss', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
         const id = req.params.id
         const query = { _id: new ObjectId(id) }
-        const result = await reportsCollection.updateOne(query, { $set: { status: 'Dismissed' } })
+        const recipe = await recipesCollection.findOne(query)
+        if (!recipe) {
+          return res.status(404).send({ message: 'Recipe not found' })
+        }
+        // Safety check: only author or admin can delete
+        if (
+          recipe.authorId !== req.user.id &&
+          recipe.authorId !== req.user._id.toString() &&
+          req.user.role !== 'admin'
+        ) {
+          return res.status(403).send({ message: 'Forbidden' })
+        }
+        const result = await recipesCollection.deleteOne(query)
         res.send(result)
       } catch (error) {
-        console.error('Error dismissing report:', error)
-        res.status(500).send({ message: 'Internal server error' })
+        console.error('Error deleting recipe:', error)
+        res.status(500).send({ message: 'Failed to delete recipe' })
       }
     })
 
+    // ==========================================
+    // 5. USER RELATED APIs
+    // ==========================================
 
 
-    // user recipe controler api
-    app.get('/api/user/my-recipe', verifyToken, async (req, res) => {
-      try {
-        const myRecipes = await recipesCollection
-          .find({ userId: req.user.authorId })
-          .toArray()
-
-        res.send(myRecipes)
-      } catch (error) {
-        console.error('Error fetching my recipes:', error)
-        res.status(500).send({ message: 'Internal server error' })
-      }
-    })
 
     // Get user-specific recipes created by the active logged-in user
     app.get('/api/user/my-recipes', verifyToken, async (req, res) => {
@@ -607,28 +493,210 @@ async function run () {
       }
     })
 
-    // Delete user-specific recipes created by the active logged-in user
-    app.delete('/api/recipes/:id', verifyToken, async (req, res) => {
+    // Update User Profile Settings (name & image)
+    app.patch('/api/user/profile', verifyToken, async (req, res) => {
       try {
-        const id = req.params.id
-        const query = { _id: new ObjectId(id) }
-        const recipe = await recipesCollection.findOne(query)
-        if (!recipe) {
-          return res.status(404).send({ message: 'Recipe not found' })
-        }
-        // Safety check: only author or admin can delete
-        if (
-          recipe.authorId !== req.user.id &&
-          recipe.authorId !== req.user._id.toString() &&
-          req.user.role !== 'admin'
-        ) {
-          return res.status(403).send({ message: 'Forbidden' })
-        }
-        const result = await recipesCollection.deleteOne(query)
+        const { displayName, profileUrl } = req.body
+        const userId = req.user.id
+
+        const updateFields = {}
+        if (displayName !== undefined) updateFields.name = displayName
+        if (profileUrl !== undefined) updateFields.image = profileUrl
+        updateFields.updatedAt = new Date()
+
+        const query = ObjectId.isValid(userId)
+          ? { $or: [{ _id: new ObjectId(userId) }, { id: userId }] }
+          : { id: userId }
+
+        const result = await usersCollection.updateOne(query, {
+          $set: updateFields
+        })
+
         res.send(result)
       } catch (error) {
-        console.error('Error deleting recipe:', error)
-        res.status(500).send({ message: 'Failed to delete recipe' })
+        console.error('Error updating user profile:', error)
+        res.status(500).send({ message: 'Failed to update profile' })
+      }
+    })
+
+    // User Dashboard Summary
+    app.get('/api/user/dashboard-summary', verifyToken, async (req, res) => {
+      try {
+        // ১. ইউজারের মোট রেসিপি সংখ্যা কাউন্ট করা
+        const totalRecipes = await recipesCollection.countDocuments({
+          authorId: req.user.id
+        })
+
+        // ২. ইউজারের মোট ফেভারিট করা রেসিপি সংখ্যা কাউন্ট করা
+        const totalFavourites = await favoritesCollection.countDocuments({
+          userId: req.user.id
+        })
+
+        // ৩. ইউজারের সব রেসিপি মিলিয়ে মোট কত লাইক এসেছে তা হিসাব করা
+        const likesResult = await recipesCollection
+          .aggregate([
+            { $match: { authorId: req.user.id } },
+            // 🎯 ফিক্স: 'LikesCount' পরিবর্তন করে "$likesCount" করা হলো
+            { $group: { _id: null, totalLikes: { $sum: '$likesCount' } } }
+          ])
+          .toArray()
+
+        // ৪. ফ্রন্টএন্ডে সব কমপ্লিট ডাটা রেসপন্স আকারে পাঠানো হলো
+        res.json({
+          totalRecipes,
+          totalFavourites,
+          likesReceived: likesResult[0]?.totalLikes || 0, // অ্যারে খালি হলেও ক্র্যাশ করবে না
+          trendingRecipe: { name: 'Spicy Truffle Risotto', views: '1.2k' },
+          recentActivity: []
+        })
+      } catch (error) {
+        console.error('Error fetching user dashboard summary:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // ==========================================
+    // 6. ADMIN RELATED APIs
+    // ==========================================
+    
+    // Fetch all users (Admin only)
+    app.get('/api/users', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const result = await usersCollection.find().toArray()
+        res.send(result)
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Failed to fetch users' })
+      }
+    })
+
+    // admin recipe controler api
+    app.get('/api/admin/recipes-summary', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
+        const recipes = await recipesCollection.find().toArray()
+
+        // কার্ড মেকট্রিক্সের জন্য সিম্পল কাউন্ট
+        const totalCount = await recipesCollection.countDocuments()
+        const featuredCount = await recipesCollection.countDocuments({
+          isFeatured: true
+        })
+
+        res.send({
+          recipes,
+          totalCount,
+          featuredCount
+        })
+      } catch (error) {
+        console.error(error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Toggle Feature State: Feature or unfeature a recipe (admin only)
+    app.patch('/api/admin/recipes/:id/feature', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const id = req.params.id
+        const { isFeatured } = req.body
+        const query = { _id: new ObjectId(id) }
+        const updateDoc = {
+          $set: {
+            isFeatured: !!isFeatured,
+            updatedAt: new Date()
+          }
+        }
+        const result = await recipesCollection.updateOne(query, updateDoc)
+        res.send(result)
+      } catch (error) {
+        console.error('Error toggling featured state:', error)
+        res.status(500).send({ message: 'Failed to toggle featured state' })
+      }
+    })
+
+    // Edit Recipe: Update general recipe fields from the admin panel (admin only)
+    app.patch('/api/admin/recipes/:id', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const id = req.params.id
+        const { recipeName, category, cuisineType, preparationTime } = req.body
+        const query = { _id: new ObjectId(id) }
+        
+        const updateFields = {}
+        if (recipeName !== undefined) updateFields.recipeName = recipeName
+        if (category !== undefined) updateFields.category = category
+        if (cuisineType !== undefined) updateFields.cuisineType = cuisineType
+        if (preparationTime !== undefined) updateFields.preparationTime = parseInt(preparationTime)
+        updateFields.updatedAt = new Date()
+
+        const result = await recipesCollection.updateOne(query, { $set: updateFields })
+        res.send(result)
+      } catch (error) {
+        console.error('Error updating recipe:', error)
+        res.status(500).send({ message: 'Failed to update recipe' })
+      }
+    })
+
+    // Get Admin Dashboard Summary: Retrieve statistics for the administrator overview
+    app.get('/api/admin/overview-summary', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const totalUsers = await usersCollection.countDocuments()
+        const totalRecipes = await recipesCollection.countDocuments()
+        const premiumMembers = await usersCollection.countDocuments({ role: 'premium' })
+        const totalReports = await reportsCollection.countDocuments()
+
+        res.send({
+          totalUsers,
+          totalRecipes,
+          premiumMembers,
+          totalReports
+        })
+      } catch (error) {
+        console.error('Error fetching admin overview summary:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Get Admin Reports: Fetch all moderation reports submitted by users
+    app.get('/api/admin/reports', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const reports = await reportsCollection.find().toArray()
+        res.send(reports)
+      } catch (error) {
+        console.error('Error fetching admin reports:', error)
+        res.status(500).send({ message: 'Internal server error' })
+      }
+    })
+
+    // Dismiss Report: Dismiss a specific flagged report by marking its status as Dismissed
+    app.put('/api/admin/reports/:id/dismiss', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden - Admins only' })
+        }
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const result = await reportsCollection.updateOne(query, { $set: { status: 'Dismissed' } })
+        res.send(result)
+      } catch (error) {
+        console.error('Error dismissing report:', error)
+        res.status(500).send({ message: 'Internal server error' })
       }
     })
 
@@ -714,32 +782,6 @@ async function run () {
       }
     })
 
-    // Update User Profile Settings (name & image)
-    app.patch('/api/user/profile', verifyToken, async (req, res) => {
-      try {
-        const { displayName, profileUrl } = req.body
-        const userId = req.user.id
-
-        const updateFields = {}
-        if (displayName !== undefined) updateFields.name = displayName
-        if (profileUrl !== undefined) updateFields.image = profileUrl
-        updateFields.updatedAt = new Date()
-
-        const query = ObjectId.isValid(userId)
-          ? { $or: [{ _id: new ObjectId(userId) }, { id: userId }] }
-          : { id: userId }
-
-        const result = await usersCollection.updateOne(query, {
-          $set: updateFields
-        })
-
-        res.send(result)
-      } catch (error) {
-        console.error('Error updating user profile:', error)
-        res.status(500).send({ message: 'Failed to update profile' })
-      }
-    })
-
     // Get Admin Transactions (admin only)
     app.get('/api/admin/transactions', verifyToken, async (req, res) => {
       try {
@@ -757,54 +799,6 @@ async function run () {
       }
     })
 
-    // ─── USER RELATED API ───
-    app.get('/api/users', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const result = await usersCollection.find().toArray()
-        res.send(result)
-      } catch (error) {
-        console.error(error)
-        res.status(500).send({ message: 'Failed to fetch users' })
-      }
-    })
-
-    app.get('/api/user/dashboard-summary', verifyToken, async (req, res) => {
-      try {
-        // ১. ইউজারের মোট রেসিপি সংখ্যা কাউন্ট করা
-        const totalRecipes = await recipesCollection.countDocuments({
-          authorId: req.user.id
-        })
-
-        // ২. ইউজারের মোট ফেভারিট করা রেসিপি সংখ্যা কাউন্ট করা
-        const totalFavourites = await favoritesCollection.countDocuments({
-          userId: req.user.id
-        })
-
-        // ৩. ইউজারের সব রেসিপি মিলিয়ে মোট কত লাইক এসেছে তা হিসাব করা
-        const likesResult = await recipesCollection
-          .aggregate([
-            { $match: { authorId: req.user.id } },
-            // 🎯 ফিক্স: 'LikesCount' পরিবর্তন করে "$likesCount" করা হলো
-            { $group: { _id: null, totalLikes: { $sum: '$likesCount' } } }
-          ])
-          .toArray()
-
-        // ৪. ফ্রন্টএন্ডে সব কমপ্লিট ডাটা রেসপন্স আকারে পাঠানো হলো
-        res.json({
-          totalRecipes,
-          totalFavourites,
-          likesReceived: likesResult[0]?.totalLikes || 0, // অ্যারে খালি হলেও ক্র্যাশ করবে না
-          trendingRecipe: { name: 'Spicy Truffle Risotto', views: '1.2k' },
-          recentActivity: []
-        })
-      } catch (error) {
-        console.error('Error fetching user dashboard summary:', error)
-        res.status(500).send({ message: 'Internal server error' })
-      }
-    })
   } finally {
     // এখানে client.close() দেওয়া যাবে না।
   }
