@@ -63,12 +63,20 @@ async function run () {
           console.log('JWT Verification Succeeded! Decoded payload:', decoded)
 
           const userQuery = ObjectId.isValid(userId)
-            ? { $or: [{ _id: new ObjectId(userId) }, { id: userId }, { email: decoded.email }] }
+            ? {
+                $or: [
+                  { _id: new ObjectId(userId) },
+                  { id: userId },
+                  { email: decoded.email }
+                ]
+              }
             : { $or: [{ id: userId }, { email: decoded.email }] }
 
           const user = await usersCollection.findOne(userQuery)
           if (!user) {
-            console.log('JWT verification succeeded but user not found in DB for ID/email')
+            console.log(
+              'JWT verification succeeded but user not found in DB for ID/email'
+            )
             return res
               .status(401)
               .send({ message: 'Unauthorized - User not found from JWT' })
@@ -84,7 +92,9 @@ async function run () {
           // Fallback to session check for backwards compatibility
           const session = await sessionsCollection.findOne({ token })
           if (!session) {
-            console.log('Database session token check also failed: session not found in DB')
+            console.log(
+              'Database session token check also failed: session not found in DB'
+            )
             return res
               .status(401)
               .send({ message: 'Unauthorized - Invalid JWT/Session token' })
@@ -100,12 +110,17 @@ async function run () {
             _id: new ObjectId(session.userId)
           })
           if (!user) {
-            console.log('Database session check succeeded but user not found in DB')
+            console.log(
+              'Database session check succeeded but user not found in DB'
+            )
             return res
               .status(401)
               .send({ message: 'Unauthorized - User not found' })
           }
-          console.log('Database session check succeeded! Authenticated User:', user.email)
+          console.log(
+            'Database session check succeeded! Authenticated User:',
+            user.email
+          )
           user.id = user.id || user._id.toString()
           req.user = user
           next()
@@ -129,7 +144,7 @@ async function run () {
     // ==========================================
     // 4. RECIPES RELATED APIs
     // ==========================================
-    
+
     // Create Recipe
     app.post('/api/recipes', verifyToken, async (req, res) => {
       try {
@@ -141,9 +156,15 @@ async function run () {
 
         // Enforce the 2-recipe limit for non-premium users (admins and premium users bypass this limit)
         if (req.user.role !== 'premium' && req.user.role !== 'admin') {
-          const recipeCount = await recipesCollection.countDocuments({ authorId: userId })
+          const recipeCount = await recipesCollection.countDocuments({
+            authorId: userId
+          })
           if (recipeCount >= 2) {
-            return res.status(403).send({ message: 'Upgrade to Premium to upload more than 2 recipes!' })
+            return res
+              .status(403)
+              .send({
+                message: 'Upgrade to Premium to upload more than 2 recipes!'
+              })
           }
         }
 
@@ -168,7 +189,7 @@ async function run () {
         const limit = 12
         const skip = (page - 1) * limit
 
-        let query = { status: 'active' } 
+        let query = { status: 'active' }
         if (req.query.isFeatured) {
           query.isFeatured = req.query.isFeatured === 'true'
         }
@@ -339,8 +360,6 @@ async function run () {
     // 5. USER RELATED APIs
     // ==========================================
 
-
-
     // Get user-specific recipes created by the active logged-in user
     app.get('/api/user/my-recipes', verifyToken, async (req, res) => {
       try {
@@ -359,17 +378,17 @@ async function run () {
     app.get('/api/user/favorites', verifyToken, async (req, res) => {
       try {
         const userId = req.user.id
-        
+
         // 1. Fetch user-recipe pairings from favorites collection
         const favorites = await favoritesCollection
           .find({ userId: userId })
           .toArray()
-          
+
         // 2. Validate and convert string IDs to MongoDB ObjectIds
         const recipeIds = favorites
           .filter(fav => ObjectId.isValid(fav.recipeId))
           .map(fav => new ObjectId(fav.recipeId))
-          
+
         // 3. Retrieve actual recipe details matching the ObjectIds
         const favoriteRecipes = await recipesCollection
           .find({ _id: { $in: recipeIds } })
@@ -418,40 +437,53 @@ async function run () {
 
         const stripeSecretKey = process.env.STRIPE_SECRET_KEY
         if (!stripeSecretKey) {
-          return res.status(500).send({ message: 'Stripe configuration is missing on server' })
+          return res
+            .status(500)
+            .send({ message: 'Stripe configuration is missing on server' })
         }
 
         // Retrieve Checkout Session status from Stripe API using native fetch
-        const stripeRes = await fetch(`https://api.stripe.com/v1/checkout/sessions/${session_id}`, {
-          headers: {
-            'Authorization': `Bearer ${stripeSecretKey}`
+        const stripeRes = await fetch(
+          `https://api.stripe.com/v1/checkout/sessions/${session_id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${stripeSecretKey}`
+            }
           }
-        })
+        )
 
         if (!stripeRes.ok) {
           const errText = await stripeRes.text()
           console.error('Stripe session retrieval error:', errText)
-          return res.status(400).send({ message: 'Failed to verify session with Stripe' })
+          return res
+            .status(400)
+            .send({ message: 'Failed to verify session with Stripe' })
         }
 
         const session = await stripeRes.json()
 
         // Verify that Stripe payment was successful
         if (session.payment_status !== 'paid') {
-          return res.status(400).send({ message: 'Payment has not been completed' })
+          return res
+            .status(400)
+            .send({ message: 'Payment has not been completed' })
         }
 
         // Get user ID associated with this session (check metadata first, then fall back to authenticated user ID)
-        const userId = session.metadata?.userId || req.user._id?.toString() || req.user.id
+        const userId =
+          session.metadata?.userId || req.user._id?.toString() || req.user.id
         const recipeId = session.metadata?.recipeId || null
-        const isPremiumUpgrade = session.metadata?.isPremiumUpgrade === 'true' || !recipeId
+        const isPremiumUpgrade =
+          session.metadata?.isPremiumUpgrade === 'true' || !recipeId
 
         // Upgrade user role to premium in MongoDB only if it's a membership purchase
         if (isPremiumUpgrade) {
           const userQuery = ObjectId.isValid(userId)
             ? { $or: [{ _id: new ObjectId(userId) }, { id: userId }] }
             : { id: userId }
-          await usersCollection.updateOne(userQuery, { $set: { role: 'premium' } })
+          await usersCollection.updateOne(userQuery, {
+            $set: { role: 'premium' }
+          })
         }
 
         // Prepare the payment record log payload
@@ -469,7 +501,9 @@ async function run () {
         }
 
         // Log transaction to payments collection if not logged already
-        const existingPayment = await paymentsCollection.findOne({ sessionId: session.id })
+        const existingPayment = await paymentsCollection.findOne({
+          sessionId: session.id
+        })
         if (!existingPayment) {
           await paymentsCollection.insertOne(paymentRecord)
         }
@@ -481,10 +515,10 @@ async function run () {
           method: paymentRecord.method,
           isPremiumUpgrade: isPremiumUpgrade,
           recipeId: recipeId,
-          date: new Date().toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
+          date: new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
           })
         })
       } catch (error) {
@@ -522,26 +556,21 @@ async function run () {
     // User Dashboard Summary
     app.get('/api/user/dashboard-summary', verifyToken, async (req, res) => {
       try {
-        // ১. ইউজারের মোট রেসিপি সংখ্যা কাউন্ট করা
         const totalRecipes = await recipesCollection.countDocuments({
           authorId: req.user.id
         })
 
-        // ২. ইউজারের মোট ফেভারিট করা রেসিপি সংখ্যা কাউন্ট করা
         const totalFavourites = await favoritesCollection.countDocuments({
           userId: req.user.id
         })
 
-        // ৩. ইউজারের সব রেসিপি মিলিয়ে মোট কত লাইক এসেছে তা হিসাব করা
         const likesResult = await recipesCollection
           .aggregate([
             { $match: { authorId: req.user.id } },
-            // 🎯 ফিক্স: 'LikesCount' পরিবর্তন করে "$likesCount" করা হলো
             { $group: { _id: null, totalLikes: { $sum: '$likesCount' } } }
           ])
           .toArray()
 
-        // ৪. ফ্রন্টএন্ডে সব কমপ্লিট ডাটা রেসপন্স আকারে পাঠানো হলো
         res.json({
           totalRecipes,
           totalFavourites,
@@ -558,7 +587,7 @@ async function run () {
     // ==========================================
     // 6. ADMIN RELATED APIs
     // ==========================================
-    
+
     // Fetch all users (Admin only)
     app.get('/api/users', verifyToken, async (req, res) => {
       try {
@@ -579,10 +608,8 @@ async function run () {
         if (req.user.role !== 'admin') {
           return res.status(403).send({ message: 'Forbidden - Admins only' })
         }
-        // ডাটাবেজে থাকা সমস্ত রেসিপি একসাথে অ্যারে আকারে আনা হলো
         const recipes = await recipesCollection.find().toArray()
 
-        // কার্ড মেকট্রিক্সের জন্য সিম্পল কাউন্ট
         const totalCount = await recipesCollection.countDocuments()
         const featuredCount = await recipesCollection.countDocuments({
           isFeatured: true
@@ -600,27 +627,31 @@ async function run () {
     })
 
     // Toggle Feature State: Feature or unfeature a recipe (admin only)
-    app.patch('/api/admin/recipes/:id/feature', verifyToken, async (req, res) => {
-      try {
-        if (req.user.role !== 'admin') {
-          return res.status(403).send({ message: 'Forbidden - Admins only' })
-        }
-        const id = req.params.id
-        const { isFeatured } = req.body
-        const query = { _id: new ObjectId(id) }
-        const updateDoc = {
-          $set: {
-            isFeatured: !!isFeatured,
-            updatedAt: new Date()
+    app.patch(
+      '/api/admin/recipes/:id/feature',
+      verifyToken,
+      async (req, res) => {
+        try {
+          if (req.user.role !== 'admin') {
+            return res.status(403).send({ message: 'Forbidden - Admins only' })
           }
+          const id = req.params.id
+          const { isFeatured } = req.body
+          const query = { _id: new ObjectId(id) }
+          const updateDoc = {
+            $set: {
+              isFeatured: !!isFeatured,
+              updatedAt: new Date()
+            }
+          }
+          const result = await recipesCollection.updateOne(query, updateDoc)
+          res.send(result)
+        } catch (error) {
+          console.error('Error toggling featured state:', error)
+          res.status(500).send({ message: 'Failed to toggle featured state' })
         }
-        const result = await recipesCollection.updateOne(query, updateDoc)
-        res.send(result)
-      } catch (error) {
-        console.error('Error toggling featured state:', error)
-        res.status(500).send({ message: 'Failed to toggle featured state' })
       }
-    })
+    )
 
     // Edit Recipe: Update general recipe fields from the admin panel (admin only)
     app.patch('/api/admin/recipes/:id', verifyToken, async (req, res) => {
@@ -631,15 +662,18 @@ async function run () {
         const id = req.params.id
         const { recipeName, category, cuisineType, preparationTime } = req.body
         const query = { _id: new ObjectId(id) }
-        
+
         const updateFields = {}
         if (recipeName !== undefined) updateFields.recipeName = recipeName
         if (category !== undefined) updateFields.category = category
         if (cuisineType !== undefined) updateFields.cuisineType = cuisineType
-        if (preparationTime !== undefined) updateFields.preparationTime = parseInt(preparationTime)
+        if (preparationTime !== undefined)
+          updateFields.preparationTime = parseInt(preparationTime)
         updateFields.updatedAt = new Date()
 
-        const result = await recipesCollection.updateOne(query, { $set: updateFields })
+        const result = await recipesCollection.updateOne(query, {
+          $set: updateFields
+        })
         res.send(result)
       } catch (error) {
         console.error('Error updating recipe:', error)
@@ -655,7 +689,9 @@ async function run () {
         }
         const totalUsers = await usersCollection.countDocuments()
         const totalRecipes = await recipesCollection.countDocuments()
-        const premiumMembers = await usersCollection.countDocuments({ role: 'premium' })
+        const premiumMembers = await usersCollection.countDocuments({
+          role: 'premium'
+        })
         const totalReports = await reportsCollection.countDocuments()
 
         res.send({
@@ -692,7 +728,9 @@ async function run () {
         }
         const id = req.params.id
         const query = { _id: new ObjectId(id) }
-        const result = await reportsCollection.updateOne(query, { $set: { status: 'Dismissed' } })
+        const result = await reportsCollection.updateOne(query, {
+          $set: { status: 'Dismissed' }
+        })
         res.send(result)
       } catch (error) {
         console.error('Error dismissing report:', error)
@@ -709,14 +747,18 @@ async function run () {
         const reportId = req.params.id
 
         // Find the report
-        const report = await reportsCollection.findOne({ _id: new ObjectId(reportId) })
+        const report = await reportsCollection.findOne({
+          _id: new ObjectId(reportId)
+        })
         if (!report) {
           return res.status(404).send({ message: 'Report not found' })
         }
 
         // Delete the associated recipe
         if (report.recipeId) {
-          await recipesCollection.deleteOne({ _id: new ObjectId(report.recipeId) })
+          await recipesCollection.deleteOne({
+            _id: new ObjectId(report.recipeId)
+          })
           // Mark all reports for this recipe as Resolved
           await reportsCollection.updateMany(
             { recipeId: report.recipeId },
@@ -730,7 +772,10 @@ async function run () {
           )
         }
 
-        res.send({ success: true, message: 'Recipe taken down and reports resolved' })
+        res.send({
+          success: true,
+          message: 'Recipe taken down and reports resolved'
+        })
       } catch (error) {
         console.error('Error taking down recipe:', error)
         res.status(500).send({ message: 'Failed to take down recipe' })
@@ -798,7 +843,6 @@ async function run () {
         res.status(500).send({ message: 'Failed to fetch transactions' })
       }
     })
-
   } finally {
     // এখানে client.close() দেওয়া যাবে না।
   }
