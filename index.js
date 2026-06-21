@@ -278,7 +278,9 @@ async function run () {
     app.get('/api/user/favorites', verifyToken, async (req, res) => {
       try {
         const userId = req.user.id
-        const favorites = await favoritesCollection.find({ userId: userId }).toArray()
+        const favorites = await favoritesCollection
+          .find({ userId: userId })
+          .toArray()
         const recipeIds = favorites.map(fav => new ObjectId(fav.recipeId))
         const favoriteRecipes = await recipesCollection
           .find({ _id: { $in: recipeIds } })
@@ -322,6 +324,41 @@ async function run () {
       } catch (error) {
         console.error(error)
         res.status(500).send({ message: 'Failed to fetch users' })
+      }
+    })
+
+    app.get('/api/user/dashboard-summary', verifyToken, async (req, res) => {
+      try {
+        // ১. ইউজারের মোট রেসিপি সংখ্যা কাউন্ট করা
+        const totalRecipes = await recipesCollection.countDocuments({
+          userId: req.user.id
+        })
+
+        // ২. ইউজারের মোট ফেভারিট করা রেসিপি সংখ্যা কাউন্ট করা
+        const totalFavourites = await favoritesCollection.countDocuments({
+          userId: req.user.id
+        })
+
+        // ৩. ইউজারের সব রেসিপি মিলিয়ে মোট কত লাইক এসেছে তা হিসাব করা
+        const likesResult = await recipesCollection
+          .aggregate([
+            { $match: { userId: req.user.id } },
+            // 🎯 ফিক্স: 'LikesCount' পরিবর্তন করে "$likesCount" করা হলো
+            { $group: { _id: null, totalLikes: { $sum: '$likesCount' } } }
+          ])
+          .toArray()
+
+        // ৪. ফ্রন্টএন্ডে সব কমপ্লিট ডাটা রেসপন্স আকারে পাঠানো হলো
+        res.json({
+          totalRecipes,
+          totalFavourites,
+          likesReceived: likesResult[0]?.totalLikes || 0, // অ্যারে খালি হলেও ক্র্যাশ করবে না
+          trendingRecipe: { name: 'Spicy Truffle Risotto', views: '1.2k' },
+          recentActivity: []
+        })
+      } catch (error) {
+        console.error('Error fetching user dashboard summary:', error)
+        res.status(500).send({ message: 'Internal server error' })
       }
     })
   } finally {
